@@ -1,7 +1,9 @@
 # flick-organizer
 Flickr organizer written in Python originally for personal use. 
 
-I'm planning to refactorize the code to be reusable by someone else.
-The script requires an active Flickr account with API access and a database.
+I have used these scripts to maintain my Flickr albums once I migrated from Google to Flickr.
 
-I need to take passwords and keys out of the code first before publishing anything here.
+TODO:
+* Refactorize the code so that the code could be reusable by someone else too.
+* Use local database like sqlite3 instead of MySQL db.
+* Create documentation
