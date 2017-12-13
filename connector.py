@@ -13,11 +13,13 @@ import urllib
 import pyexiv2
 import datetime
 import ConfigParser
+from retrying import retry
 from PIL import Image
 from operator import attrgetter
 from dateutil import parser
 from collections import defaultdict
 from httplib import IncompleteRead
+from flickr_api import FlickrError
 
 logging.basicConfig(filename='connector.log',filemode='w',level=logging.DEBUG,format='%(asctime)s %(message)s')
 logging.debug('Get user photos')
@@ -92,10 +94,10 @@ def photo_entry(photo):
         print photo.__dict__
         raise
 
-#def retry_if_incompleteread(exception):
-#    return isinstance(exception, IncompleteRead)
+def retry_get_photos(exception):
+    return isinstance(exception, IncompleteRead) or isinstance(exception, FlickrError)
 
-#@retry(stop_max_attempt_number = 5, retry_on_exception=retry_if_incompleteread)
+@retry(stop_max_attempt_number = 5, retry_on_exception=retry_get_photos)
 def get_photos(user, page):
     logging.debug('Load photo information from Flickr.')
     return user.getPhotos(per_page=500, extras="""description,
