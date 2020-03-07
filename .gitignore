@@ -6,3 +6,6 @@ __pycache__/
 app.cfg
 albums.txt
 *.log
+*.sqlite3
+.idea
+venv_tests

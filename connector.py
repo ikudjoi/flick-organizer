@@ -1,61 +1,38 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import flickr_api
-import MySQLdb as mdb
+from flickr import Flickr
+from database import Database
+import argparse
 import logging
-import sys
 import os
-import re
 import shutil
-import codecs
-import urllib
-import pyexiv2
+import requests
 import datetime
-import ConfigParser
-from retrying import retry
 from PIL import Image
-from operator import attrgetter
-from dateutil import parser
 from collections import defaultdict
-from httplib import IncompleteRead
-from flickr_api import FlickrError
+
+
+def parse_arguments():
+    """
+    Parse command line arguments
+    :return: argparse.ArgumentParser object
+    """
+    parser = argparse.ArgumentParser(description="Flickr Organizer!")
+    parser.add_argument('--photos', action='store_true', help="Update photos table")
+    parser.add_argument('--sets', action='store_true', help="Update photo sets table")
+    parser.add_argument('--ignore-photo-in-many-sets', action = 'store_true', help = "Do not issue a warning if a photo belongs to more than one set.")
+    parser.add_argument('--ignore-photo-in-no-sets', action = 'store_true', help = "Do not issue a warning if a photo doesn't belongs to any set.")
+    parser.add_argument('--order', action = 'store_true', help = "Reorder photos and sets by taken date")
+    parser.add_argument('--download', type = str, default = "siilo", help = "Download all photos from the Flickr Account to local directory")
+    return parser.parse_args()
 
 logging.basicConfig(filename='connector.log',filemode='w',level=logging.DEBUG,format='%(asctime)s %(message)s')
 logging.debug('Get user photos')
 
-config = ConfigParser.RawConfigParser()
-config.read('app.cfg')
+db = Database()
+flickr = Flickr(db)
 
-api_key = config.get('Flickr API', 'key')
-api_secret = config.get('Flickr API', 'secret')
-
-flickr_api.set_keys(api_key, api_secret)
-
-# Read authorization token from config file and write it to temporary auth file.
-oauth_token = config.get('Flickr API', 'oauth_token')
-with open("auth.cfg", "w") as authf:
-    authf.write(oauth_token)
-
-# Set auth token.
-flickr_api.set_auth_handler('auth.cfg')
-user = flickr_api.test.login()
-# Remove auth file.
-os.remove('auth.cfg')
-
-logging.debug('Open database connection')
-
-server = config.get('MySQL', 'server')
-dbname = config.get('MySQL', 'dbname')
-username = config.get('MySQL', 'username')
-password = config.get('MySQL', 'password')
-
-con = mdb.connect(server, username, password, dbname);
-con.set_character_set('utf8')
-cur = con.cursor()
-cur.execute('SET NAMES utf8;')
-cur.execute('SET CHARACTER SET utf8;')
-cur.execute('SET character_set_connection=utf8;')
 failedphoto = None
 
 photorootdir = u'/siilo/users/ikudjoi/flickr/'
@@ -71,130 +48,6 @@ def remove_extension(filename):
         return filename[:-4]
     return filename
 
-
-def get_int_list_from_database(sql):
-    result = []
-    with con:
-        cur.execute(sql)
-        row = cur.fetchone()
-        while row is not None:
-            result.append(row[0])
-            row = cur.fetchone()
-    return result
-
-
-def photo_entry(photo):
-    try:
-        return u"""%s, FROM_UNIXTIME(%s), \'%s\', \'%s\', %s, \'%s\', \'%s\', FROM_UNIXTIME(%s),
-                \'%s\', \'%s\', \'%s\', \'%s\', %s, %s""" % \
-            (photo.id, photo.dateupload, photo.originalformat, escape_apostrophe(remove_extension(photo.title)), photo.views, photo.datetaken, \
-            escape_apostrophe(photo.description), photo.lastupdate, photo.url_o, photo.url_t, photo.url_s, photo.url_m, photo.o_width, photo.o_height)
-    except (UnicodeEncodeError, TypeError):
-        failedphoto = photo
-        print photo.__dict__
-        raise
-
-def retry_get_photos(exception):
-    return isinstance(exception, IncompleteRead) or isinstance(exception, FlickrError)
-
-@retry(stop_max_attempt_number = 5, retry_on_exception=retry_get_photos)
-def get_photos(user, page):
-    logging.debug('Load photo information from Flickr.')
-    return user.getPhotos(per_page=500, extras="""description,
-            date_upload, date_taken, icon_server, original_format,
-            last_update, geo, tags, machine_tags, o_dims, views, media,
-            path_alias, url_o, url_t, url_s, url_m, o_dims""",page=page)        
-
-def update_photos():
-    page = 1
-    photos = get_photos(user,page)
-    with con:
-        cur.execute(u'TRUNCATE TABLE f_photo;')
-        while page <= photos.info.pages:
-            logging.debug('Build command')
-            
-            cmd = u"""INSERT INTO f_photo (id, dateUploaded, originalFormat, title, views,
-            taken, description, lastUpdate, urlOriginal, urlTiny, urlSmall, urlMedium, width, height)
-                      VALUES (""" + u'),('.join([photo_entry(photo) for photo in photos]) + u');'
-            logging.debug('Execute command')
-            cur.execute(cmd)
-            con.commit()
-            logging.debug('Inserted %s photos to the database.' % len(photos))
-            page+=1
-            photos = get_photos(user,page)
-
-def photoset_entry(photoset):
-    return u'%s, \'%s\', FROM_UNIXTIME(%s), %s, %s, FROM_UNIXTIME(%s)' % \
-           (photoset.id, photoset.title, photoset.date_create, photoset.count_comments, photoset.count_views, photoset.date_update)
-
-def update_photosets():
-    with con:
-        # With this sql we get the date of the earliest photo per set.
-        sql = """
-        select ps.id, mintaken.prefix
-        from f_photoset ps
-        left join f_photosetnodate nd
-        on ps.id = nd.id
-        inner join (
-        select psp.photosetid, date_format(min(fp.taken), '%Y-%m-%d') as prefix
-        from f_photosetphoto psp
-        inner join f_photo fp
-        on psp.photoId = fp.id
-        group by psp.photosetId) mintaken
-        on ps.id = mintaken.photosetid
-        where nd.id is null
-        """
-        cur.execute(sql)
-        
-        setdates = dict()
-        row = cur.fetchone()
-        while row is not None:
-            setdates[str(row[0])] = row[1]
-            row = cur.fetchone()
-
-        photosets = user.getPhotosets()
-        for ps in photosets:
-            if ps.id in setdates:
-                prefix = setdates[ps.id]
-                if not ps.title.startswith(prefix):
-                    title = ps.title
-                    if (re.match('\d\d\d\d-\d\d-\d\d .*', ps.title)):
-                        title = title[11:]
-                    title = prefix + ' ' + title
-                    logging.debug('Changing photoset %s title ''%s'' to ''%s''.' % (ps.id, ps.title, title))
-                    #ps.editMeta(title = title)
-
-        cur.execute('TRUNCATE TABLE f_photoset;')
-        logging.debug('Build command')
-        cmd = u'INSERT INTO f_photoset (id, title, createDate, commentCount, viewCount, updateDate) ' + \
-              u'VALUES (' + u'),('.join([photoset_entry(photoset) for photoset in photosets]) + u');'
-        logging.debug('Execute command')
-        cur.execute(cmd)
-        con.commit()
-        logging.debug('Inserted %s photosets to the database.' % len(photosets))
-
-        afile = codecs.open('albums.txt', 'w', 'utf-8')
-        cur.execute('TRUNCATE TABLE f_photosetphoto;')
-        photosetphotos = []
-        for photoset in sorted(photosets, key=lambda ps: ps.title, reverse=True):
-
-            line = u'<li><a href="https://www.flickr.com/photos/ilkkakudjoi/sets/%s/">%s</a></li>\n' % (photoset.id, photoset.title)
-            afile.write(line)
-            
-            page = 1
-            while True:
-                photos = photoset.getPhotos(page=page)
-                logging.debug('Retrieved %s photo ids from set %s.' % (len(photos), photoset.title))
-                photosetphotos += [(photo.id, photoset.id) for photo in photos]
-                page += 1
-                if (page > photos.info.pages):
-                    break
-        afile.close()        
-        cmd = u'INSERT INTO f_photosetphoto (photoId, photosetId) ' + \
-              u'VALUES (' + u'),('.join([psp[0] + ', ' + psp[1] for psp in photosetphotos]) + u');'
-        cur.execute(cmd)
-        con.commit()
-        logging.debug('Inserted %s photo-photoset links to the database.' % len(photosetphotos))
         
 def delete_duplicates():
 
@@ -206,12 +59,12 @@ def delete_duplicates():
              ON p.title = d.title AND p.taken = d.taken
              WHERE p.id <> d.id;"""
     
-    duplicateids = get_int_list_from_database(sql)
+    duplicateids = db.get_int_list_from_database(sql)
     logging.debug('Found %s duplicates.' % len(duplicateids))
 
     for id in duplicateids:
         logging.debug('Deleting photo id %s.' % id)
-        photo = flickr_api.Photo(id = id)
+        photo = flickr.Photo(id = id)
         photo.delete()
 
 
@@ -224,22 +77,25 @@ def order_photosets_by_taken_date():
     inner join f_photo p on psp.photoId = p.id
     group by ps.id, ps.title order by max(case when nd.id is not null then cast('1900-01-01' as datetime) else p.taken end) desc"""
 
-    setids = get_int_list_from_database(sql)
+    setids = db.get_int_list_from_database(sql)
     setids = [str(i) for i in setids]
     logging.debug('Retrieved %s photoset ids.' % len(setids))
-    flickr_api.Photoset().orderSets(photoset_ids=','.join(setids))
+    flickr.Photoset().orderSets(photoset_ids=','.join(setids))
 
     logging.debug('Ordering photos inside sets. Getting list of sets.')
-    photosets = user.getPhotosets()
+    photosets = flickr.get_photosets()
     for photoset in photosets:
         logging.debug('Getting photos of set %s and ordering them by taken date.' % photoset.title)
         sql = """select p.id from f_photo p
                  inner join f_photosetphoto psp on p.id = psp.photoId
                  where psp.photosetId = %s
                  order by p.taken asc""" % photoset.id
-        photoids = get_int_list_from_database(sql)
+        photoids = db.get_int_list_from_database(sql)
         photoids = [str(i) for i in photoids]
-        photoset.reorderPhotos(photo_ids=','.join(photoids))
+        try:
+            photoset.reorderPhotos(photo_ids=','.join(photoids))
+        except flickr.FlickrError as e:
+            logging.warn("Could not reorder photoset %s.", photoset.id)
 
 def get_local_sets_and_photos():
     setfolders = os.listdir(photorootdir)
@@ -260,10 +116,17 @@ def get_local_sets_and_photos():
 
     return setidtoset, photoidtophoto
 
+def download_file(url, file_name):
+    with open(file_name, "wb") as file:
+        # get request
+        response = requests.get(url)
+        # write to file
+        file.write(response.content)
+
 def download():
     setidtoset, photoidtophoto = get_local_sets_and_photos()
     
-    photosets = user.getPhotosets()
+    photosets = flickr.get_photosets()
     setsinflickr = []
     for photoset in photosets:
         setsinflickr.append(int(photoset.id))
@@ -273,7 +136,7 @@ def download():
             page += 1
             photos += photoset.getPhotos(per_page=500, extras='date_taken, url_o, o_dims',page=page)
         photosetdate = min([photo.datetaken for photo in photos])
-        photosetpath = '%s_%s_%s' % (parser.parse(photosetdate).strftime('%Y%m%d'), photoset.id, photoset.title.replace(' ', '_'))
+        photosetpath = '%s_%s_%s' % (datetime.datetime.strptime(photosetdate).strftime('%Y%m%d'), photoset.id, photoset.title.replace(' ', '_'))
 
         logging.debug(u'Ensuring that path "%s" exists.' % photosetpath)
         move = False
@@ -296,7 +159,7 @@ def download():
         
         alreadycheckedphotos = dict()
         for photo in photos:
-            photopath = '%s_%s.jpeg' % (parser.parse(photo.datetaken).strftime('%Y%m%d%H%M%S'), photo.id)
+            photopath = '%s_%s.jpeg' % (datetime.datetime.strptime(photo.datetaken).strftime('%Y%m%d%H%M%S'), photo.id)
             photopath = os.path.join(photosetpath, photopath)
 
             if photo.id in alreadycheckedphotos:
@@ -339,10 +202,9 @@ def download():
 
             logging.debug(u'Downloading photo id %s to path "%s".' % (photo.id, photopath))
             try:
-                urllib.urlretrieve(photo.url_o, photopath)
-            except (ContentTooShortError):
+                download_file(photo.url_o, photopath)
+            except (Exception):
                 logging.debug(u'Failed to download photo from path "%s". Trying again.' % (photo.url_o))
-                urllib.urlretrieve(photo.url_o, photopath)
             except:
                 logging.debug(u'Failed to download photo from path "%s".' % (photo.url_o))
                 raise
@@ -364,7 +226,7 @@ def download():
 def move_date_taken(sql, photoids, dtfix, giventime):
     if not sql is None:
         logging.debug('Getting photo ids from database.')
-        photoids = get_int_list_from_database(sql)
+        photoids = db.get_int_list_from_database(sql)
 
     if not isinstance(photoids, list):
         photoids = photoids.split(',')
@@ -378,8 +240,9 @@ def move_date_taken(sql, photoids, dtfix, giventime):
     photoidtodatetime = dict()
         
     for id in photoidtolocalphoto:
-        metadata = pyexiv2.ImageMetadata(photoidtolocalphoto[id])
-        metadata.read()
+        img = Image.open(photoidtolocalphoto[id])
+        metadata = img._getexif()
+        #metadata.read()
         for datekey in datekeys:
             if datekey in metadata.exif_keys:
                 dt = metadata[datekey].value
@@ -391,11 +254,11 @@ def move_date_taken(sql, photoids, dtfix, giventime):
             if giventime is not None:
                 photoidtodatetime[id] = giventime
             else:
-                raise 'No take date found from photo'
+                raise('No take date found from photo')
     for id in photoidtolocalphoto:
         logging.debug('Changing taken dates of photo %s %s.' % (id, photoidtolocalphoto[id]))
-        metadata = pyexiv2.ImageMetadata(photoidtolocalphoto[id])
-        metadata.read()
+        img = Image.open(photoidtolocalphoto[id])
+        metadata = img._getexif()
 
         dt = photoidtodatetime[id]
         if giventime is None:
@@ -404,32 +267,35 @@ def move_date_taken(sql, photoids, dtfix, giventime):
             if datekey in metadata.exif_keys:
                 metadata[datekey].value = dt
             else:
-                metadata[datekey] = pyexiv2.ExifTag(datekey, dt)
+                raise NotImplementedError("Broken in Python 3 conversion!")
             metadata.write()
 
     for id in photoidtolocalphoto:
         logging.debug('Replacing photo %s ''%s''.' % (id, photoidtolocalphoto[id]))
-        flickr_api.Upload.replace(photo_id = id, async = False, photo_file = photoidtolocalphoto[id])
-        
-        
-if ('photos' in sys.argv):
-    update_photos()
-if ('sets' in sys.argv):
-    update_photosets()
-if ('dedupr' in sys.argv):
-    delete_duplicates()
-if ('order' in sys.argv):
-    order_photosets_by_taken_date()
-if ('download' in sys.argv):
-    download()
+        flickr.Upload.replace(photo_id = id, photo_file = photoidtolocalphoto[id])
 
-if ('move' in sys.argv):
-    sql = """select p.id
-    from f_photo p
-    inner join f_photosetphoto psp
-    on p.id = psp.photoid
-    where psp.photosetid = 72157646713519388
-    and left(p.title,3)='DSC'"""
-    
+arguments = parse_arguments()
+
+if (arguments.sets):
+    flickr.update_photosets()
+if (arguments.photos):
+    ignore_photo_in_many_sets = arguments.ignore_photo_in_many_sets
+    ignore_photo_in_no_sets = arguments.ignore_photo_in_no_sets
+    flickr.update_photos(ignore_photo_in_many_sets, ignore_photo_in_no_sets)
+#if ('dedupr' in sys.argv):
+#    delete_duplicates()
+#if ('order' in sys.argv):
+#    order_photosets_by_taken_date()
+#if ('download' in sys.argv):
+#    download()
+
+# if ('move' in sys.argv):
+#     sql = """select p.id
+#     from f_photo p
+#     inner join f_photosetphoto psp
+#     on p.id = psp.photoid
+#     where psp.photosetid = 72157646713519388
+#     and left(p.title,3)='DSC'"""
+#
     #move_date_taken(None, '15157778368', datetime.timedelta(minutes=38), None)
     #move_date_taken(None, '14923073599,14923125960', None, None, None, None, datetime.datetime(2014, 8, 16, 13, 15))
