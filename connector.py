@@ -23,6 +23,8 @@ def parse_arguments():
     parser.add_argument('--sets', action='store_true', help="Update photo sets table")
     parser.add_argument('--ignore-photo-in-many-sets', action = 'store_true', help = "Do not issue a warning if a photo belongs to more than one set.")
     parser.add_argument('--ignore-photo-in-no-sets', action = 'store_true', help = "Do not issue a warning if a photo doesn't belongs to any set.")
+    parser.add_argument('--delete-duplicates', action = 'store_true', help = "Delete duplicate photos.")
+    parser.add_argument('--dry-run', action = 'store_true', help = "Combine with --delete-duplicates, will only show what would be done.")
     parser.add_argument('--order', action = 'store_true', help = "Reorder photos and sets by taken date")
     parser.add_argument('--download', type = str, default = "siilo", help = "Download all photos from the Flickr Account to local directory")
     return parser.parse_args()
@@ -282,6 +284,9 @@ if (arguments.photos):
     ignore_photo_in_many_sets = arguments.ignore_photo_in_many_sets
     ignore_photo_in_no_sets = arguments.ignore_photo_in_no_sets
     flickr.update_photos(ignore_photo_in_many_sets, ignore_photo_in_no_sets)
+if (arguments.delete_duplicates):
+    dry_run = arguments.dry_run
+    flickr.delete_duplicates(dry_run)
 #if ('dedupr' in sys.argv):
 #    delete_duplicates()
 #if ('order' in sys.argv):

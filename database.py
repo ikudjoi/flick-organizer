@@ -67,4 +67,63 @@ class Database():
         self.db.connect()
         self.db.create_tables([FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, LocalPhoto])
 
+    def get_duplicate_photos(self):
+        set_counts = (FlickrPhotoSetPhoto.select(
+            FlickrPhotoSetPhoto.photo_id,
+            fn.count().alias("set_count")
+        ).group_by(FlickrPhotoSetPhoto.photo_id)).alias("set_counts")
 
+        subquery = (FlickrPhoto.select(
+            FlickrPhoto.photo_id,
+            FlickrPhoto.width,
+            FlickrPhoto.height,
+            FlickrPhoto.taken_timestamp,
+            FlickrPhoto.title,
+            FlickrPhoto.url_original,
+            FlickrPhoto.media,
+            FlickrPhoto.media_status,
+            FlickrPhoto.machine_tags,
+            FlickrPhoto.tags,
+            FlickrPhoto.original_format,
+            set_counts.c.set_count,
+            fn.row_number().over(
+            partition_by=[FlickrPhoto.title, FlickrPhoto.taken_timestamp],
+            # When choosing a duplicate, prefer ones with less set memberships and smaller sizes.
+            order_by=[fn.ifnull(set_counts.c.set_count, 0).desc(), FlickrPhoto.width.desc()]).alias('rn'))
+                    .join(set_counts, JOIN.LEFT_OUTER, on=(FlickrPhoto.photo_id == set_counts.c.photo_id))
+                    .alias("enumerated"))
+
+        # Since we can't filter on the rank, we are wrapping it in a query
+        # and performing the filtering in the outer query.
+        return (FlickrPhoto.select(
+            subquery.c.photo_id,
+            subquery.c.width,
+            subquery.c.height,
+            subquery.c.taken_timestamp,
+            subquery.c.title,
+            subquery.c.url_original,
+            subquery.c.media,
+            subquery.c.media_status,
+            subquery.c.machine_tags,
+            subquery.c.tags,
+            subquery.c.original_format,
+            subquery.c.set_count)
+                 .from_(subquery)
+                 .where(subquery.c.rn > 1))
+        # select *
+        # from
+        # (select photo_id taken_timestamp, title, row_number()
+        # over(partition
+        # by
+        # taken_timestamp, title
+        # order
+        # by
+        # photo_id) as rn, first_value(photo_id)
+        # over(partition
+        # by
+        # taken_timestamp, title
+        # order
+        # by
+        # photo_id) as first_id
+        # from flickrphoto) where
+        # rn > 1;

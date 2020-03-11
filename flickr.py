@@ -5,7 +5,8 @@ import flickrapi
 import webbrowser
 import os
 import datetime
-from database import Database, FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, LocalPhoto
+from database import FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, LocalPhoto
+from retry import retry
 
 PHOTO_EXTRAS = "date_upload,date_taken,original_format,last_update,tags,machine_tags,o_dims,views,media,url_o"
 
@@ -51,6 +52,7 @@ class Flickr:
     def flickr_timestamp2dt(self, value):
         return datetime.datetime.fromtimestamp(int(value))
 
+    @retry((flickrapi.FlickrError), delay=1, backoff=2, tries=3)
     def walk_api_items(self, api, value_attribute, items_attribute, api_kwargs):
         page = 1
         total_pages = 1
@@ -92,60 +94,77 @@ class Flickr:
         if sets.count == 0:
             raise FlickrOrganizerError("No photo sets in the database.")
 
-        # Loop photos not in sets
-        for photo in self.walk_api_items(
-            self.flickr.photos.getNotInSet,
-            "photos",
-            "photo",
-            {
-                "user_id": self.user_id,
-                "extras": PHOTO_EXTRAS
-            }):
-
-            if not ignore_photo_in_no_sets:
-                print(f"Photo {photo['id']} not in any set!")
-
-            self._save_photo(photo)
-
-        for dbset in sets:
+        with self.db.db.atomic():
+            # Loop photos not in sets
             for photo in self.walk_api_items(
-                    self.flickr.photosets.getPhotos,
-                    "photoset",
-                    "photo", {
-                        "user_id": self.user_id,
-                        "photoset_id": dbset.photoset_id,
-                        "extras": PHOTO_EXTRAS
-                    }):
-                photo_id = photo["id"]
+                self.flickr.photos.getNotInSet,
+                "photos",
+                "photo",
+                {
+                    "user_id": self.user_id,
+                    "extras": PHOTO_EXTRAS
+                }):
 
-                FlickrPhotoSetPhoto.create(
-                    photoset_id = dbset.photoset_id,
-                    photo_id = photo_id
-                ).save()
+                if not ignore_photo_in_no_sets:
+                    print(f"Photo {photo['id']} not in any set!")
 
-                if ignore_photo_in_many_sets and photo_id in photo_ids:
-                    if not ignore_photo_in_many_sets:
-                        print(f"Photo {photo_id} in many sets")
-                    continue
-
+                photo_ids.add(photo['id'])
                 self._save_photo(photo)
+
+            for dbset in sets:
+                for photo in self.walk_api_items(
+                        self.flickr.photosets.getPhotos,
+                        "photoset",
+                        "photo", {
+                            "user_id": self.user_id,
+                            "photoset_id": dbset.photoset_id,
+                            "extras": PHOTO_EXTRAS
+                        }):
+                    photo_id = photo["id"]
+
+                    FlickrPhotoSetPhoto.create(
+                        photoset_id = dbset.photoset_id,
+                        photo_id = photo_id
+                    ).save()
+
+                    if photo_id in photo_ids:
+                        if not ignore_photo_in_many_sets:
+                            print(f"Photo {photo_id} in many sets")
+                        continue
+
+                    photo_ids.add(photo_id)
+                    self._save_photo(photo)
 
     def update_photosets(self):
         FlickrPhotoSet.truncate_table()
-        for set in self.walk_api_items(
-            self.flickr.photosets.getList,
-                "photosets",
-                "photoset", {}):
-            dbset = FlickrPhotoSet.create(
-                photoset_id=set['id'],
-                title=set['title']['_content'],
-                view_count=set['count_views'],
-                comment_count=set['count_comments'],
-                photo_count=set['count_photos'],
-                video_count=set['count_videos'],
-                updated_timestamp=self.flickr_timestamp2dt(set['date_update']),
-                created_timestamp=self.flickr_timestamp2dt(set['date_create']))
-            dbset.save()
+        with self.db.db.atomic():
+            for set in self.walk_api_items(
+                self.flickr.photosets.getList,
+                    "photosets",
+                    "photoset", {}):
+                dbset = FlickrPhotoSet.create(
+                    photoset_id=set['id'],
+                    title=set['title']['_content'],
+                    view_count=set['count_views'],
+                    comment_count=set['count_comments'],
+                    photo_count=set['count_photos'],
+                    video_count=set['count_videos'],
+                    updated_timestamp=self.flickr_timestamp2dt(set['date_update']),
+                    created_timestamp=self.flickr_timestamp2dt(set['date_create']))
+                dbset.save()
+
+    def delete_duplicates(self, dry_run):
+        duplos = self.db.get_duplicate_photos()
+        for duplicate in duplos:
+            if dry_run:
+                print(f"Would delete photo {duplicate.photo_id} with title {duplicate.title} taken at {duplicate.taken_timestamp}!")
+                continue
+
+            print(f"Deleting photo {duplicate.photo_id} with title {duplicate.title} taken at {duplicate.taken_timestamp}!")
+            self.flickr.photos.delete(photo_id = duplicate.photo_id)
+        # Must update photos table after removing duplicates!
+        if not dry_run:
+            self.update_photos(True, True)
 
 
         # with con:
