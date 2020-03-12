@@ -45,6 +45,7 @@ class FlickrPhotoSet(BaseModel):
 class FlickrPhotoSetPhoto(BaseModel):
     photo_id = ForeignKeyField(FlickrPhoto)
     photoset_id = ForeignKeyField(FlickrPhotoSet)
+    order_num = IntegerField()
 
 
 class LocalPhoto(BaseModel):
@@ -61,13 +62,16 @@ class LocalPhoto(BaseModel):
     orientation = IntegerField(null=True)
 
 
-class Database():
+class Database:
     def __init__(self):
         self.db = db
         self.db.connect()
         self.db.create_tables([FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, LocalPhoto])
 
-    def get_duplicate_photos(self):
+
+class DatabaseUtil:
+    @staticmethod
+    def get_duplicate_photos():
         set_counts = (FlickrPhotoSetPhoto.select(
             FlickrPhotoSetPhoto.photo_id,
             fn.count().alias("set_count")
@@ -110,20 +114,13 @@ class Database():
             subquery.c.set_count)
                  .from_(subquery)
                  .where(subquery.c.rn > 1))
-        # select *
-        # from
-        # (select photo_id taken_timestamp, title, row_number()
-        # over(partition
-        # by
-        # taken_timestamp, title
-        # order
-        # by
-        # photo_id) as rn, first_value(photo_id)
-        # over(partition
-        # by
-        # taken_timestamp, title
-        # order
-        # by
-        # photo_id) as first_id
-        # from flickrphoto) where
-        # rn > 1;
+
+    @staticmethod
+    def get_sets_and_earliest_photo_date():
+        return (FlickrPhotoSet.select(
+            FlickrPhotoSet.photoset_id,
+            FlickrPhotoSet.title,
+            fn.min(FlickrPhoto.taken_timestamp).alias("earliest_taken_timestamp"))
+                .join(FlickrPhotoSetPhoto, on=(FlickrPhotoSet.photoset_id == FlickrPhotoSetPhoto.photoset_id))
+                .join(FlickrPhoto, on=(FlickrPhotoSetPhoto.photo_id == FlickrPhoto.photo_id))
+                .group_by(FlickrPhotoSet.photoset_id, FlickrPhotoSet.title))

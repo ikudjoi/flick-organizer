@@ -5,7 +5,7 @@ import flickrapi
 import webbrowser
 import os
 import datetime
-from database import FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, LocalPhoto
+from database import FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, DatabaseUtil
 from retry import retry
 
 PHOTO_EXTRAS = "date_upload,date_taken,original_format,last_update,tags,machine_tags,o_dims,views,media,url_o"
@@ -112,28 +112,34 @@ class Flickr:
                 self._save_photo(photo)
 
             for dbset in sets:
-                for photo in self.walk_api_items(
-                        self.flickr.photosets.getPhotos,
-                        "photoset",
-                        "photo", {
-                            "user_id": self.user_id,
-                            "photoset_id": dbset.photoset_id,
-                            "extras": PHOTO_EXTRAS
-                        }):
-                    photo_id = photo["id"]
+                order_num = 1
+                try:
+                    for photo in self.walk_api_items(
+                            self.flickr.photosets.getPhotos,
+                            "photoset",
+                            "photo", {
+                                "user_id": self.user_id,
+                                "photoset_id": dbset.photoset_id,
+                                "extras": PHOTO_EXTRAS
+                            }):
+                        photo_id = photo["id"]
 
-                    FlickrPhotoSetPhoto.create(
-                        photoset_id = dbset.photoset_id,
-                        photo_id = photo_id
-                    ).save()
+                        FlickrPhotoSetPhoto.create(
+                            photoset_id = dbset.photoset_id,
+                            photo_id = photo_id,
+                            order_num = order_num
+                        ).save()
+                        order_num += 1
 
-                    if photo_id in photo_ids:
-                        if not ignore_photo_in_many_sets:
-                            print(f"Photo {photo_id} in many sets")
-                        continue
+                        if photo_id in photo_ids:
+                            if not ignore_photo_in_many_sets:
+                                print(f"Photo {photo_id} in many sets")
+                            continue
 
-                    photo_ids.add(photo_id)
-                    self._save_photo(photo)
+                        photo_ids.add(photo_id)
+                        self._save_photo(photo)
+                except flickrapi.FlickrError as ex:
+                    raise FlickrOrganizerError(f"Failed to retrieve photos of set {dbset.photoset_id}. Inner exception: {ex}")
 
     def update_photosets(self):
         FlickrPhotoSet.truncate_table()
@@ -154,7 +160,7 @@ class Flickr:
                 dbset.save()
 
     def delete_duplicates(self, dry_run):
-        duplos = self.db.get_duplicate_photos()
+        duplos = DatabaseUtil.get_duplicate_photos()
         for duplicate in duplos:
             if dry_run:
                 print(f"Would delete photo {duplicate.photo_id} with title {duplicate.title} taken at {duplicate.taken_timestamp}!")
@@ -166,7 +172,19 @@ class Flickr:
         if not dry_run:
             self.update_photos(True, True)
 
+    def fix_ordering_of_sets(self, dry_run):
+        set_info = DatabaseUtil.get_sets_and_earliest_photo_date()
+        for set in set_info:
+            title_prefix = set.title[:10]
+            min_date = set.earliest_taken_timestamp.strftime("%Y-%m-%d")
+            if title_prefix == min_date:
+                continue
 
+            if dry_run:
+                print(f"Name of the set '{set.title}' should begin with date {min_date}!")
+                continue
+
+            pass
         # with con:
         #     # With this sql we get the date of the earliest photo per set.
         #     sql = """
