@@ -184,74 +184,15 @@ class Flickr:
                 print(f"Name of the set '{set.title}' should begin with date {min_date}!")
                 continue
 
-            pass
-        # with con:
-        #     # With this sql we get the date of the earliest photo per set.
-        #     sql = """
-        #     select ps.id, mintaken.prefix
-        #     from f_photoset ps
-        #     left join f_photosetnodate nd
-        #     on ps.id = nd.id
-        #     inner join (
-        #     select psp.photosetid, date_format(min(fp.taken), '%Y-%m-%d') as prefix
-        #     from f_photosetphoto psp
-        #     inner join f_photo fp
-        #     on psp.photoId = fp.id
-        #     group by psp.photosetId) mintaken
-        #     on ps.id = mintaken.photosetid
-        #     where nd.id is null
-        #     """
-        #     cur.execute(sql)
-        #
-        #     setdates = dict()
-        #     row = cur.fetchone()
-        #     while row is not None:
-        #         setdates[str(row[0])] = row[1]
-        #         row = cur.fetchone()
-        #
-        #     photosets = user.getPhotosets()
-        #     for ps in photosets:
-        #         if ps.id in setdates:
-        #             prefix = setdates[ps.id]
-        #             if not ps.title.startswith(prefix):
-        #                 title = ps.title
-        #                 if (re.match('\d\d\d\d-\d\d-\d\d .*', ps.title)):
-        #                     title = title[11:]
-        #                 title = prefix + ' ' + title
-        #                 logging.debug('Changing photoset %s title ''%s'' to ''%s''.' % (ps.id, ps.title, title))
-        #                 #ps.editMeta(title = title)
-        #
-        #     cur.execute('TRUNCATE TABLE f_photoset;')
-        #     logging.debug('Build command')
-        #     cmd = u'INSERT INTO f_photoset (id, title, createDate, commentCount, viewCount, updateDate) ' + \
-        #           u'VALUES (' + u'),('.join([photoset_entry(photoset) for photoset in photosets]) + u');'
-        #     logging.debug('Execute command')
-        #     cur.execute(cmd)
-        #     con.commit()
-        #     logging.debug('Inserted %s photosets to the database.' % len(photosets))
-        #
-        #     afile = codecs.open('albums.txt', 'w', 'utf-8')
-        #     cur.execute('TRUNCATE TABLE f_photosetphoto;')
-        #     photosetphotos = []
-        #     for photoset in sorted(photosets, key=lambda ps: ps.title, reverse=True):
-        #
-        #         line = u'<li><a href="https://www.flickr.com/photos/ilkkakudjoi/sets/%s/">%s</a></li>\n' % (photoset.id, photoset.title)
-        #         afile.write(line)
-        #
-        #         page = 1
-        #         while True:
-        #             photos = photoset.getPhotos(page=page)
-        #             logging.debug('Retrieved %s photo ids from set %s.' % (len(photos), photoset.title))
-        #             photosetphotos += [(photo.id, photoset.id) for photo in photos]
-        #             page += 1
-        #             if (page > photos.info.pages):
-        #                 break
-        #     afile.close()
-        #     cmd = u'INSERT INTO f_photosetphoto (photoId, photosetId) ' + \
-        #           u'VALUES (' + u'),('.join([psp[0] + ', ' + psp[1] for psp in photosetphotos]) + u');'
-        #     cur.execute(cmd)
-        #     try:
-        #         con.commit()
-        #     except (Exception):
-        #         con.commit()
-        #     logging.debug('Inserted %s photo-photoset links to the database.' % len(photosetphotos))
+            prefix_is_valid_date = True
+            try:
+                datetime.datetime.strptime(title_prefix, "%Y-%m-%d")
+            except ValueError:
+                prefix_is_valid_date = False
+
+            if prefix_is_valid_date:
+                new_title = min_date + set.title[10:]
+            else:
+                new_title = f"{min_date} {set.title}"
+
+            self.flickr.photosets.editMeta(title = new_title)

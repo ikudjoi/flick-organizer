@@ -124,3 +124,18 @@ class DatabaseUtil:
                 .join(FlickrPhotoSetPhoto, on=(FlickrPhotoSet.photoset_id == FlickrPhotoSetPhoto.photoset_id))
                 .join(FlickrPhoto, on=(FlickrPhotoSetPhoto.photo_id == FlickrPhoto.photo_id))
                 .group_by(FlickrPhotoSet.photoset_id, FlickrPhotoSet.title))
+
+    @staticmethod
+    def get_sets():
+        return FlickrPhotoSetPhoto.select()
+
+    @staticmethod
+    def get_set_photos(set_id):
+        return (FlickrPhoto.select(
+            FlickrPhoto.photo_id,
+            FlickrPhoto.title,
+            FlickrPhoto.url_original,
+            FlickrPhoto.width,
+            FlickrPhoto.height)
+            .join(FlickrPhotoSetPhoto, on=(FlickrPhoto.photo_id == FlickrPhotoSetPhoto.photo_id))
+            .where(FlickrPhotoSetPhoto.photoset_id == set_id))
