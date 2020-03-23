@@ -4,27 +4,25 @@
 import os
 import requests
 import datetime
-from retry import retry
+from database import DatabaseUtil
+import shutil
+from PIL import Image
 from collections import defaultdict
+
 
 class DownloaderException(Exception):
     pass
 
 
 class Downloader:
-    def __init__(self, db, flickr, local_photo_root_path):
-        self.db = db
-        self.flickr = flickr
-        self.local_photo_root_path = local_photo_root_path
-
-    def get_local_sets_and_photos(self):
-        set_folders = os.listdir(self.local_photo_root_path)
+    def get_local_sets_and_photos(self, download_path):
+        set_folders = os.listdir(download_path)
         set_folders = [(int(parts[1][1]), parts[0]) for parts in [(folder, folder.split('_')) for folder in set_folders] if len(parts[1]) >= 3]
         if len(set([folder[0] for folder in set_folders])) != len(set_folders):
             raise DownloaderException('Sets contain duplicates.')
 
         set_id_to_set = dict(set_folders)
-        photos = [(folder, os.listdir(os.path.join(self.local_photo_root_path, folder))) for folder in set_id_to_set.values()]
+        photos = [(folder, os.listdir(os.path.join(download_path, folder))) for folder in set_id_to_set.values()]
         photos = [(folder[0], [(photo[:-5].split('_'), photo) for photo in folder[1] if photo[-5:] == '.jpeg']) for folder in photos]
         photos = [(folder[0], [(int(photo[0][1]), photo[1]) for photo in folder[1] if len(photo[0]) == 2]) for folder in photos]
         photos = [[(photo[0], (folder[0], photo[1])) for photo in folder[1]] for folder in photos]
@@ -42,99 +40,97 @@ class Downloader:
             # write to file
             file.write(response.content)
 
+    def download(self, download_path):
+        if not os.path.isdir(download_path):
+            os.makedirs(download_path)
 
-    def download(self):
-        set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos()
+        set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos(download_path)
 
-        photosets = self.db.get_sets()
+        photosets = DatabaseUtil.get_sets()
         sets_in_flickr = []
         for photoset in photosets:
-            sets_in_flickr.append(photoset.id)
-            photos = self.db.get_set_photos(photoset.id)
-            photoset_date = min([photo.taken_timestamp for photo in photos])
-            photoset_path = f"{photoset.title}_{photoset.id}"
+            sets_in_flickr.append(photoset.photoset_id)
+            photos = DatabaseUtil.get_set_photos(photoset.photoset_id)
+            photoset_path = f"{photoset.title}_{photoset.photoset_id}"
 
-            logging.debug(u'Ensuring that path "%s" exists.' % photosetpath)
+            print(f"Ensuring that path '{photoset_path}' exists.")
             move = False
-            if int(photoset.id) in setidtoset:
-                currentsetpath = setidtoset[int(photoset.id)]
-                if currentsetpath != photosetpath:
+            if photoset.photoset_id in set_id_to_set:
+                current_set_path = set_id_to_set[photoset.photoset_id]
+                if current_set_path != photoset_path:
                     move = True
 
-            photosetpath = os.path.join(photorootdir, photosetpath)
+            photoset_path = os.path.join(download_path, photoset_path)
             if move:
-                currentsetpath = os.path.join(photorootdir, currentsetpath)
-                logging.debug(u'Renaming set folder %s to "%s".' % (currentsetpath, photosetpath))
-                os.rename(currentsetpath, photosetpath)
-                setidtoset, photoidtophoto = get_local_sets_and_photos()
-            elif not os.path.exists(photosetpath):
-                logging.debug(u'Creating new photoset folder "%s".' % photosetpath)
-                os.makedirs(photosetpath)
+                current_set_path = os.path.join(download_path, current_set_path)
+                print(f"Renaming set folder '{current_set_path}' to '{photoset_path}'.")
+                os.rename(current_set_path, photoset_path)
+                set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos()
+            elif not os.path.exists(photoset_path):
+                print(f"Creating new photoset folder '{photoset_path}'.")
+                os.makedirs(photoset_path)
             else:
-                logging.debug(u'Photoset folder "%s" already exists.' % photosetpath)
+                print(f"Photoset folder '{photoset_path}' already exists.")
 
-            alreadycheckedphotos = dict()
+            already_checked_photos = {}
             for photo in photos:
-                photopath = '%s_%s.jpeg' % (datetime.datetime.strptime(photo.datetaken).strftime('%Y%m%d%H%M%S'), photo.id)
-                photopath = os.path.join(photosetpath, photopath)
+                photo_path = f"{datetime.datetime.strptime(photo.taken_timestamp).strftime('%Y%m%d%H%M%S')}_{photo.photo_id}.jpeg"
+                photo_path = os.path.join(photoset_path, photo_path)
 
-                if photo.id in alreadycheckedphotos:
-                    os.link(alreadycheckedphotos[photo.id], photopath)
+                if photo.photo_id in already_checked_photos:
+                    os.link(already_checked_photos[photo.photo_id], photo_path)
                     continue
 
-                elif int(photo.id) in photoidtophoto:
-                    currentphotopaths = photoidtophoto[int(photo.id)]
-                    currentphotopath = currentphotopaths[0]
-                    currentphotopath = os.path.join(photorootdir, currentphotopath[0], currentphotopath[1])
+                elif photo.photo_id in photo_id_to_photo:
+                    current_photo_paths = photo_id_to_photo[photo.photo_id]
+                    current_photo_path = current_photo_paths[0]
+                    current_photo_path = os.path.join(download_path, current_photo_path[0], current_photo_path[1])
                     delete = False
                     try:
-                        im = Image.open(currentphotopath)
+                        im = Image.open(current_photo_path)
                         im.load()
                         (width, height) = im.size
-                        if ((int(photo.o_width) != int(width)) or (int(photo.o_height) != int(height))):
-                            logging.debug(u'Found photo with unmatching size "%s" (local w%s x h%s, flickr w%s x h%s).' % \
-                                          (currentphotopath, width, height, photo.o_width, photo.o_height))
+                        if (photo.width != width) or (photo.height != height):
+                            print(f"Found photo with unmatching size '{current_photo_path}' (local w{width} x h{height}, flickr w{photo.width} x h{photo.height}")
                             delete = True
-                    except (IOError):
-                        logging.debug(u'Found unreadable photo "%s".' % (currentphotopath))
+                    except IOError:
+                        print(f"Found unreadable photo '{current_photo_path}'")
                         delete = True
                     if delete:
-                        os.remove(currentphotopath)
+                        os.remove(current_photo_path)
                         # no continue here
-                    elif currentphotopath != photopath:
-                        logging.debug(u'Moving photo "%s to "%s".' % (currentphotopath, photopath))
-                        os.rename(currentphotopath, photopath)
+                    elif current_photo_path != photo_path:
+                        print(f"Moving photo '{current_photo_path}' to '{photo_path}'.")
+                        os.rename(current_photo_path, photo_path)
                     else:
-                        logging.debug(u'Photo id %s already exists in path "%s".' % (photo.id, photopath))
+                        print(f"Photo id {photo.photo_id} already exists in path '{photo_path}'.")
 
-                    for extraphoto in currentphotopaths[1:]:
-                        extraphotopath = os.path.join(photorootdir, extraphoto[0], extraphoto[1])
-                        os.remove(extraphotopath)
-                    del photoidtophoto[int(photo.id)]
+                    for extra_photo in current_photo_paths[1:]:
+                        extra_photo_path = os.path.join(download_path, extra_photo[0], extra_photo[1])
+                        os.remove(extra_photo_path)
+                    del photo_id_to_photo[photo.photo_id]
 
-                    alreadycheckedphotos[photo.id] = photopath
+                    already_checked_photos[photo.photo_id] = photo_path
                     if not delete:
                         continue
 
-                logging.debug(u'Downloading photo id %s to path "%s".' % (photo.id, photopath))
+                print(f"Downloading photo id {photo.photo_id} to path '{photo_path}'.")
                 try:
-                    download_file(photo.url_o, photopath)
-                except (Exception):
-                    logging.debug(u'Failed to download photo from path "%s". Trying again.' % (photo.url_o))
+                    self.download_file(photo.url_original, photo_path)
                 except:
-                    logging.debug(u'Failed to download photo from path "%s".' % (photo.url_o))
+                    print(f"Failed to download photo from path '{photo.url_original}'.")
                     raise
-                alreadycheckedphotos[photo.id] = photopath
+                already_checked_photos[photo.photo_id] = photo_path
 
-        logging.debug(u'Removing photos that no longer exists in Flickr.')
-        for photoid in photoidtophoto:
-            for photopath in photoidtophoto[photoid]:
-                phototoremove = os.path.join(photorootdir, photopath[0], photopath[1])
-                logging.debug(u'Removing photo %s.' % (phototoremove))
-                os.remove(phototoremove)
-        logging.debug(u'Removing photosets that no longer exists in Flickr.')
-        for photosetid in setidtoset:
-            if photosetid not in setsinflickr:
-                settoremove = os.path.join(photorootdir, setidtoset[photosetid])
-                logging.debug(u'Removing photoset %s.' % (settoremove))
-                shutil.rmtree(settoremove)
+        print("Removing photos that no longer exists in Flickr.")
+        for photo_id, photo_paths in photo_id_to_photo.items():
+            for photo_path in photo_paths:
+                photo_to_remove = os.path.join(download_path, photo_path[0], photo_path[1])
+                print(f"Removing photo {photo_to_remove}.")
+                os.remove(photo_to_remove)
+        print("Removing photosets that no longer exists in Flickr.")
+        for photoset_id, set_path in set_id_to_set.items():
+            if photoset_id not in sets_in_flickr:
+                set_to_remove = os.path.join(download_path, set_path)
+                print(f"Removing photoset {set_to_remove}.")
+                shutil.rmtree(set_to_remove)

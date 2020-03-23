@@ -127,7 +127,7 @@ class DatabaseUtil:
 
     @staticmethod
     def get_sets():
-        return FlickrPhotoSetPhoto.select()
+        return FlickrPhotoSet.select()
 
     @staticmethod
     def get_set_photos(set_id):

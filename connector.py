@@ -3,14 +3,11 @@
 
 from flickr import Flickr
 from database import Database
+from downloader import Downloader
 import argparse
 import logging
 import os
-import shutil
-import requests
-import datetime
 from PIL import Image
-from collections import defaultdict
 
 
 def parse_arguments():
@@ -146,7 +143,9 @@ if arguments.order_sets:
     dry_run = arguments.dry_run
     flickr.fix_ordering_of_sets(dry_run)
 if arguments.download_path is not None:
-    flickr.download(arguments.download_path)
+    downloader = Downloader()
+    downloader.download(arguments.download_path)
+
 #if ('order' in sys.argv):
 #    order_photosets_by_taken_date()
 #if ('download' in sys.argv):
