@@ -41,6 +41,8 @@ class Downloader:
             file.write(response.content)
 
     def download(self, download_path):
+        download_path = os.path.expanduser(download_path)
+
         if not os.path.isdir(download_path):
             os.makedirs(download_path)
 
@@ -51,7 +53,7 @@ class Downloader:
         for photoset in photosets:
             sets_in_flickr.append(photoset.photoset_id)
             photos = DatabaseUtil.get_set_photos(photoset.photoset_id)
-            photoset_path = f"{photoset.title}_{photoset.photoset_id}"
+            photoset_path = f"{photoset.title.replace(' ', '_')}_{photoset.photoset_id}"
 
             print(f"Ensuring that path '{photoset_path}' exists.")
             move = False
@@ -74,7 +76,7 @@ class Downloader:
 
             already_checked_photos = {}
             for photo in photos:
-                photo_path = f"{datetime.datetime.strptime(photo.taken_timestamp).strftime('%Y%m%d%H%M%S')}_{photo.photo_id}.jpeg"
+                photo_path = f"{photo.taken_timestamp.strftime('%Y%m%dT%H%M%S')}_{photo.photo_id}.jpeg"
                 photo_path = os.path.join(photoset_path, photo_path)
 
                 if photo.photo_id in already_checked_photos:

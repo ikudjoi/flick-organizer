@@ -134,6 +134,7 @@ class DatabaseUtil:
         return (FlickrPhoto.select(
             FlickrPhoto.photo_id,
             FlickrPhoto.title,
+            FlickrPhoto.taken_timestamp,
             FlickrPhoto.url_original,
             FlickrPhoto.width,
             FlickrPhoto.height)
