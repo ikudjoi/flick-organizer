@@ -20,7 +20,7 @@ class Downloader:
             return {}, {}
 
         set_folders = os.listdir(download_path)
-        set_folders = [(int(parts[1][1]), parts[0]) for parts in [(folder, folder.split('_')) for folder in set_folders] if len(parts[1]) >= 3]
+        set_folders = [(int(parts[1][-1]), parts[0]) for parts in [(folder, folder.split('_')) for folder in set_folders] if len(parts[1]) >= 2]
         if len(set([folder[0] for folder in set_folders])) != len(set_folders):
             raise DownloaderException('Sets contain duplicates.')
 
