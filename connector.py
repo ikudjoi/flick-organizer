@@ -144,7 +144,7 @@ if arguments.order_sets:
     flickr.fix_ordering_of_sets(dry_run)
 if arguments.download_path is not None:
     downloader = Downloader()
-    downloader.download(arguments.download_path)
+    downloader.download(arguments.download_path, arguments.dry_run)
 
 #if ('order' in sys.argv):
 #    order_photosets_by_taken_date()

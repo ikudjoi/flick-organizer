@@ -16,6 +16,9 @@ class DownloaderException(Exception):
 
 class Downloader:
     def get_local_sets_and_photos(self, download_path):
+        if not os.path.isdir(download_path):
+            return {}, {}
+
         set_folders = os.listdir(download_path)
         set_folders = [(int(parts[1][1]), parts[0]) for parts in [(folder, folder.split('_')) for folder in set_folders] if len(parts[1]) >= 3]
         if len(set([folder[0] for folder in set_folders])) != len(set_folders):
@@ -40,11 +43,13 @@ class Downloader:
             # write to file
             file.write(response.content)
 
-    def download(self, download_path):
+    def download(self, download_path, dry_run):
         download_path = os.path.expanduser(download_path)
 
         if not os.path.isdir(download_path):
-            os.makedirs(download_path)
+            print(f"Create download path")
+            if not dry_run:
+                os.makedirs(download_path)
 
         set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos(download_path)
 
@@ -66,11 +71,13 @@ class Downloader:
             if move:
                 current_set_path = os.path.join(download_path, current_set_path)
                 print(f"Renaming set folder '{current_set_path}' to '{photoset_path}'.")
-                os.rename(current_set_path, photoset_path)
-                set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos()
+                if not dry_run:
+                    os.rename(current_set_path, photoset_path)
+                    set_id_to_set, photo_id_to_photo = self.get_local_sets_and_photos()
             elif not os.path.exists(photoset_path):
                 print(f"Creating new photoset folder '{photoset_path}'.")
-                os.makedirs(photoset_path)
+                if not dry_run:
+                    os.makedirs(photoset_path)
             else:
                 print(f"Photoset folder '{photoset_path}' already exists.")
 
@@ -80,7 +87,8 @@ class Downloader:
                 photo_path = os.path.join(photoset_path, photo_path)
 
                 if photo.photo_id in already_checked_photos:
-                    os.link(already_checked_photos[photo.photo_id], photo_path)
+                    if not dry_run:
+                        os.link(already_checked_photos[photo.photo_id], photo_path)
                     continue
 
                 elif photo.photo_id in photo_id_to_photo:
@@ -99,17 +107,21 @@ class Downloader:
                         print(f"Found unreadable photo '{current_photo_path}'")
                         delete = True
                     if delete:
-                        os.remove(current_photo_path)
+                        if not dry_run:
+                            os.remove(current_photo_path)
                         # no continue here
                     elif current_photo_path != photo_path:
                         print(f"Moving photo '{current_photo_path}' to '{photo_path}'.")
-                        os.rename(current_photo_path, photo_path)
+                        if not dry_run:
+                            os.rename(current_photo_path, photo_path)
                     else:
                         print(f"Photo id {photo.photo_id} already exists in path '{photo_path}'.")
 
                     for extra_photo in current_photo_paths[1:]:
+                        print(f"Removing extra photo '{extra_photo}'.")
                         extra_photo_path = os.path.join(download_path, extra_photo[0], extra_photo[1])
-                        os.remove(extra_photo_path)
+                        if not dry_run:
+                            os.remove(extra_photo_path)
                     del photo_id_to_photo[photo.photo_id]
 
                     already_checked_photos[photo.photo_id] = photo_path
@@ -118,7 +130,8 @@ class Downloader:
 
                 print(f"Downloading photo id {photo.photo_id} to path '{photo_path}'.")
                 try:
-                    self.download_file(photo.url_original, photo_path)
+                    if not dry_run:
+                        self.download_file(photo.url_original, photo_path)
                 except:
                     print(f"Failed to download photo from path '{photo.url_original}'.")
                     raise
@@ -129,10 +142,12 @@ class Downloader:
             for photo_path in photo_paths:
                 photo_to_remove = os.path.join(download_path, photo_path[0], photo_path[1])
                 print(f"Removing photo {photo_to_remove}.")
-                os.remove(photo_to_remove)
+                if not dry_run:
+                    os.remove(photo_to_remove)
         print("Removing photosets that no longer exists in Flickr.")
         for photoset_id, set_path in set_id_to_set.items():
             if photoset_id not in sets_in_flickr:
                 set_to_remove = os.path.join(download_path, set_path)
                 print(f"Removing photoset {set_to_remove}.")
-                shutil.rmtree(set_to_remove)
+                if not dry_run:
+                    shutil.rmtree(set_to_remove)
