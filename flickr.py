@@ -113,7 +113,7 @@ class Flickr:
                 photo_ids.add(photo['id'])
                 self._save_photo(photo)
 
-            for dbset in sets:
+            for db_set in sets:
                 order_num = 1
                 try:
                     for photo in self.walk_api_items(
@@ -121,13 +121,13 @@ class Flickr:
                             "photoset",
                             "photo", {
                                 "user_id": self.user_id,
-                                "photoset_id": dbset.photoset_id,
+                                "photoset_id": db_set.photoset_id,
                                 "extras": PHOTO_EXTRAS
                             }):
                         photo_id = photo["id"]
 
                         FlickrPhotoSetPhoto.create(
-                            photoset_id = dbset.photoset_id,
+                            photoset_id = db_set.photoset_id,
                             photo_id = photo_id,
                             order_num = order_num
                         ).save()
@@ -141,7 +141,8 @@ class Flickr:
                         photo_ids.add(photo_id)
                         self._save_photo(photo)
                 except flickrapi.FlickrError as ex:
-                    raise FlickrOrganizerError(f"Failed to retrieve photos of set {dbset.photoset_id}. Inner exception: {ex}")
+                    raise FlickrOrganizerError(f"Failed to retrieve photos of set {db_set.photoset_id}. "
+                                               f"Inner exception ({type(ex).__name__}): {ex}")
 
     def update_photosets(self):
         FlickrPhotoSet.truncate_table()
@@ -150,7 +151,7 @@ class Flickr:
                 self.flickr.photosets.getList,
                     "photosets",
                     "photoset", {}):
-                dbset = FlickrPhotoSet.create(
+                db_set = FlickrPhotoSet.create(
                     photoset_id=set['id'],
                     title=set['title']['_content'],
                     view_count=set['count_views'],
@@ -159,7 +160,7 @@ class Flickr:
                     video_count=set['count_videos'],
                     updated_timestamp=self.flickr_timestamp2dt(set['date_update']),
                     created_timestamp=self.flickr_timestamp2dt(set['date_create']))
-                dbset.save()
+                db_set.save()
 
     def delete_duplicates(self, dry_run):
         duplicates = DatabaseUtil.get_duplicate_photos()
