@@ -51,7 +51,7 @@ class Flickr:
         self.user_id = self.user['user']['id']
 
     @staticmethod
-    def flickr_timestamp2dt(self, value):
+    def flickr_timestamp2dt(value):
         return datetime.datetime.fromtimestamp(int(value))
 
     @retry(flickrapi.FlickrError, delay=1, backoff=2, tries=3)
