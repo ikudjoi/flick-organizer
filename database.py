@@ -41,7 +41,6 @@ class FlickrPhotoSet(BaseModel):
     created_timestamp = DateTimeField()
 
 
-#photoset nodate ?
 class FlickrPhotoSetPhoto(BaseModel):
     photo_id = ForeignKeyField(FlickrPhoto)
     photoset_id = ForeignKeyField(FlickrPhotoSet)

@@ -7,7 +7,10 @@ from downloader import Downloader
 import argparse
 import logging
 import os
-from PIL import Image
+
+
+class FlickrOrganizerError(Exception):
+    pass
 
 
 def parse_arguments():
@@ -24,6 +27,8 @@ def parse_arguments():
     parser.add_argument('--dry-run', action = 'store_true', help = "Combine with --delete-duplicates, will only show what would be done.")
     parser.add_argument('--order-sets', action = 'store_true', help = "Reorder sets by taken date")
     parser.add_argument('--download-path', type = str, help = "Download all photos from the Flickr Account to given local directory")
+    parser.add_argument('--move-date-taken', type = str, help = "Move date taken of given photos (comma-separated string of ids)")
+    parser.add_argument('--time-delta', type = str, help = "Time delta for move-date-taken parameter as datetime.timedelta parameters")
     return parser.parse_args()
 
 
@@ -76,59 +81,9 @@ def order_photosets_by_taken_date():
         except flickr.FlickrError as e:
             logging.warn("Could not reorder photoset %s.", photoset.id)
 
-             
-def move_date_taken(sql, photoids, dtfix, giventime):
-    if not sql is None:
-        logging.debug('Getting photo ids from database.')
-        photoids = db.get_int_list_from_database(sql)
-
-    if not isinstance(photoids, list):
-        photoids = photoids.split(',')
-
-    photoids = [int(i) for i in photoids]
-    setidtoset, photoidtophoto = get_local_sets_and_photos()
-    # Ensure that all photos have been loaded by constructing a dictionary.
-
-    photoidtolocalphoto = dict([[id, os.path.join(photorootdir, photoidtophoto[id][0][0], photoidtophoto[id][0][1])] for id in photoids])
-    datekeys = ['Exif.Photo.DateTimeOriginal', 'Exif.Photo.DateTimeDigitized']
-    photoidtodatetime = dict()
-        
-    for id in photoidtolocalphoto:
-        img = Image.open(photoidtolocalphoto[id])
-        metadata = img._getexif()
-        #metadata.read()
-        for datekey in datekeys:
-            if datekey in metadata.exif_keys:
-                dt = metadata[datekey].value
-                if id not in photoidtodatetime:
-                    photoidtodatetime[id] = dt
-                elif dt != photoidtodatetime[id]:
-                    raise Exception('Different dates in photo.')
-        if id not in photoidtodatetime:
-            if giventime is not None:
-                photoidtodatetime[id] = giventime
-            else:
-                raise('No take date found from photo')
-    for id in photoidtolocalphoto:
-        logging.debug('Changing taken dates of photo %s %s.' % (id, photoidtolocalphoto[id]))
-        img = Image.open(photoidtolocalphoto[id])
-        metadata = img._getexif()
-
-        dt = photoidtodatetime[id]
-        if giventime is None:
-            dt = dt + dtfix
-        for datekey in datekeys:
-            if datekey in metadata.exif_keys:
-                metadata[datekey].value = dt
-            else:
-                raise NotImplementedError("Broken in Python 3 conversion!")
-            metadata.write()
-
-    for id in photoidtolocalphoto:
-        logging.debug('Replacing photo %s ''%s''.' % (id, photoidtolocalphoto[id]))
-        flickr.Upload.replace(photo_id = id, photo_file = photoidtolocalphoto[id])
 
 arguments = parse_arguments()
+dry_run = arguments.dry_run
 
 if arguments.sets:
     flickr.update_photosets()
@@ -137,27 +92,20 @@ if arguments.photos:
     ignore_photo_in_no_sets = arguments.ignore_photo_in_no_sets
     flickr.update_photos(ignore_photo_in_many_sets, ignore_photo_in_no_sets)
 if arguments.delete_duplicates:
-    dry_run = arguments.dry_run
     flickr.delete_duplicates(dry_run)
 if arguments.order_sets:
-    dry_run = arguments.dry_run
     flickr.fix_ordering_of_sets(dry_run)
-if arguments.download_path is not None:
-    downloader = Downloader()
-    downloader.download(arguments.download_path, arguments.dry_run)
-
-#if ('order' in sys.argv):
-#    order_photosets_by_taken_date()
-#if ('download' in sys.argv):
-#    download()
-
-# if ('move' in sys.argv):
-#     sql = """select p.id
-#     from f_photo p
-#     inner join f_photosetphoto psp
-#     on p.id = psp.photoid
-#     where psp.photosetid = 72157646713519388
-#     and left(p.title,3)='DSC'"""
-#
-    #move_date_taken(None, '15157778368', datetime.timedelta(minutes=38), None)
-    #move_date_taken(None, '14923073599,14923125960', None, None, None, None, datetime.datetime(2014, 8, 16, 13, 15))
+if arguments.move_date_taken is not None:
+    download_path = arguments.download_path
+    if download_path is None:
+        raise FlickrOrganizerError("Must provide --download-path argument too!")
+    time_delta = arguments.time_delta
+    if time_delta is None:
+        raise FlickrOrganizerError("Must provide --time-delta argument too!")
+    downloader = Downloader(download_path, dry_run)
+    downloader.move_date_taken(arguments.move_date_taken, time_delta)
+# Do not trigger download of all photos if download path was given for moving taken timestamps.
+elif arguments.download_path is not None:
+    download_path = arguments.download_path
+    downloader = Downloader(download_path, dry_run)
+    downloader.download()

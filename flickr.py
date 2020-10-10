@@ -10,6 +10,7 @@ from retry import retry
 
 PHOTO_EXTRAS = "date_upload,date_taken,original_format,last_update,tags,machine_tags,o_dims,views,media,url_o"
 
+
 class FlickrOrganizerError(Exception):
     pass
 
@@ -46,13 +47,14 @@ class Flickr:
         print('Get user')
         self.user = self.flickr.test.login()
         if self.user['stat'] != "ok":
-            raise Exception("Login status not ok!")
+            raise FlickrOrganizerError("Login status not ok!")
         self.user_id = self.user['user']['id']
 
+    @staticmethod
     def flickr_timestamp2dt(self, value):
         return datetime.datetime.fromtimestamp(int(value))
 
-    @retry((flickrapi.FlickrError), delay=1, backoff=2, tries=3)
+    @retry(flickrapi.FlickrError, delay=1, backoff=2, tries=3)
     def walk_api_items(self, api, value_attribute, items_attribute, api_kwargs):
         page = 1
         total_pages = 1
@@ -100,10 +102,10 @@ class Flickr:
                 self.flickr.photos.getNotInSet,
                 "photos",
                 "photo",
-                {
-                    "user_id": self.user_id,
-                    "extras": PHOTO_EXTRAS
-                }):
+                    {
+                        "user_id": self.user_id,
+                        "extras": PHOTO_EXTRAS
+                    }):
 
                 if not ignore_photo_in_no_sets:
                     print(f"Photo {photo['id']} not in any set!")
@@ -160,8 +162,8 @@ class Flickr:
                 dbset.save()
 
     def delete_duplicates(self, dry_run):
-        duplos = DatabaseUtil.get_duplicate_photos()
-        for duplicate in duplos:
+        duplicates = DatabaseUtil.get_duplicate_photos()
+        for duplicate in duplicates:
             if dry_run:
                 print(f"Would delete photo {duplicate.photo_id} with title {duplicate.title} taken at {duplicate.taken_timestamp}!")
                 continue
@@ -181,7 +183,7 @@ class Flickr:
                 continue
 
             if dry_run:
-                print(f"Name of the set '{set.title}' should begin with date {min_date}!")
+                print(f"Name of the set '{set.title}' ({set.photoset_id}) should begin with date {min_date}!")
                 continue
 
             prefix_is_valid_date = True
