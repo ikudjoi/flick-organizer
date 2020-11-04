@@ -177,14 +177,14 @@ class Flickr:
 
     def fix_ordering_of_sets(self, dry_run):
         set_info = DatabaseUtil.get_sets_and_earliest_photo_date()
-        for set in set_info:
-            title_prefix = set.title[:10]
-            min_date = set.earliest_taken_timestamp.strftime("%Y-%m-%d")
+        for photo_set in set_info:
+            title_prefix = photo_set.title[:10]
+            min_date = photo_set.earliest_taken_timestamp.strftime("%Y-%m-%d")
             if title_prefix == min_date:
                 continue
 
+            print(f"Name of the set '{photo_set.title}' ({photo_set.photoset_id}) should begin with date {min_date}!")
             if dry_run:
-                print(f"Name of the set '{set.title}' ({set.photoset_id}) should begin with date {min_date}!")
                 continue
 
             prefix_is_valid_date = True
@@ -194,8 +194,33 @@ class Flickr:
                 prefix_is_valid_date = False
 
             if prefix_is_valid_date:
-                new_title = min_date + set.title[10:]
+                new_title = min_date + photo_set.title[10:]
             else:
-                new_title = f"{min_date} {set.title}"
+                new_title = f"{min_date} {photo_set.title}"
 
-            self.flickr.photosets.editMeta(title = new_title)
+            self.flickr.photosets.editMeta(photoset_id=photo_set.id, title=new_title)
+
+    @staticmethod
+    def photo_to_timestamp(photo):
+        try:
+            if photo.title.startswith('VID_'):
+                return datetime.datetime.strptime(photo.title[:19], 'VID_%Y%m%d_%H%M%S')
+            if photo.title.startswith('VID-') and photo.title[12:15] == '-WA':
+                return datetime.datetime.strptime(photo.title[:12], 'VID-%Y%m%d')
+        except ValueError as ve:
+            pass
+        return photo.taken_timestamp
+
+    def fix_ordering_of_photos(self):
+        photo_sets = DatabaseUtil.get_sets()
+        for photo_set in photo_sets:
+            photos = DatabaseUtil.get_set_photos(photo_set.photoset_id)
+            # Convert result to list
+            photos = [photo for photo in photos]
+            photos.sort(key=Flickr.photo_to_timestamp)
+            photo_ids = ",".join([str(photo.photo_id) for photo in photos])
+
+            self.flickr.photosets.reorderPhotos(
+                photoset_id = photo_set.photoset_id,
+                photo_ids = photo_ids
+            )

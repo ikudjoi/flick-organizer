@@ -26,6 +26,7 @@ def parse_arguments():
     parser.add_argument('--delete-duplicates', action = 'store_true', help = "Delete duplicate photos.")
     parser.add_argument('--dry-run', action = 'store_true', help = "Combine with --delete-duplicates, will only show what would be done.")
     parser.add_argument('--order-sets', action = 'store_true', help = "Reorder sets by taken date")
+    parser.add_argument('--order-photos', action = 'store_true', help = "Reorder photos by taken date.")
     parser.add_argument('--download-path', type = str, help = "Download all photos from the Flickr Account to given local directory")
     parser.add_argument('--move-date-taken', type = str, help = "Move date taken of given photos (comma-separated string of ids)")
     parser.add_argument('--time-delta', type = str, help = "Time delta for move-date-taken parameter as datetime.timedelta parameters")
@@ -95,6 +96,8 @@ if arguments.delete_duplicates:
     flickr.delete_duplicates(dry_run)
 if arguments.order_sets:
     flickr.fix_ordering_of_sets(dry_run)
+if arguments.order_photos:
+    flickr.fix_ordering_of_photos()
 if arguments.move_date_taken is not None:
     download_path = arguments.download_path
     if download_path is None:
