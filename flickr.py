@@ -72,16 +72,20 @@ class Flickr:
             page += 1
 
     def _save_photo(self, flickr_photo):
+        # Fake the taken timestamp of videos.
+        title = flickr_photo["title"]
+        taken_timestamp = datetime.datetime.strptime(flickr_photo["datetaken"], "%Y-%m-%d %H:%M:%S")
+        taken_timestamp = self.photo_corrected_taken_timestamp(taken_timestamp, title)
         FlickrPhoto.create(
             photo_id=flickr_photo["id"],
-            title=flickr_photo["title"],
+            title=title,
             original_format=flickr_photo["originalformat"],
             tags=flickr_photo["tags"],
             machine_tags=flickr_photo["machine_tags"],
             media=flickr_photo["media"],
             media_status=flickr_photo["media_status"],
             view_count=flickr_photo["views"],
-            taken_timestamp=datetime.datetime.strptime(flickr_photo["datetaken"], "%Y-%m-%d %H:%M:%S"),
+            taken_timestamp=taken_timestamp,
             uploaded_timestamp=self.flickr_timestamp2dt(flickr_photo["dateupload"]),
             updated_timestamp=self.flickr_timestamp2dt(flickr_photo["lastupdate"]),
             url_original=flickr_photo["url_o"],
@@ -144,7 +148,7 @@ class Flickr:
                     raise FlickrOrganizerError(f"Failed to retrieve photos of set {db_set.photoset_id}. "
                                                f"Inner exception ({type(ex).__name__}): {ex}")
 
-    def update_photosets(self):
+    def update_photo_sets(self):
         FlickrPhotoSet.truncate_table()
         with self.db.db.atomic():
             for set in self.walk_api_items(
@@ -201,15 +205,15 @@ class Flickr:
             self.flickr.photosets.editMeta(photoset_id=photo_set.id, title=new_title)
 
     @staticmethod
-    def photo_to_timestamp(photo):
+    def photo_corrected_taken_timestamp(taken_timestamp, title):
         try:
-            if photo.title.startswith('VID_'):
-                return datetime.datetime.strptime(photo.title[:19], 'VID_%Y%m%d_%H%M%S')
-            if photo.title.startswith('VID-') and photo.title[12:15] == '-WA':
-                return datetime.datetime.strptime(photo.title[:12], 'VID-%Y%m%d')
+            if title.startswith('VID_'):
+                return datetime.datetime.strptime(title[:19], 'VID_%Y%m%d_%H%M%S')
+            if title.startswith('VID-') and title[12:15] == '-WA':
+                return datetime.datetime.strptime(title[:12], 'VID-%Y%m%d')
         except ValueError as ve:
             pass
-        return photo.taken_timestamp
+        return taken_timestamp
 
     def fix_ordering_of_photos(self):
         photo_sets = DatabaseUtil.get_sets()
@@ -217,9 +221,10 @@ class Flickr:
             photos = DatabaseUtil.get_set_photos(photo_set.photoset_id)
             # Convert result to list
             photos = [photo for photo in photos]
-            photos.sort(key=Flickr.photo_to_timestamp)
+            photos.sort(key=lambda x: x.taken_timestamp)
             photo_ids = ",".join([str(photo.photo_id) for photo in photos])
 
+            print(f"Fix ordering of photos of photo set {photo_set.photoset_id}.")
             self.flickr.photosets.reorderPhotos(
                 photoset_id = photo_set.photoset_id,
                 photo_ids = photo_ids

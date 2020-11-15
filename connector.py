@@ -87,7 +87,7 @@ arguments = parse_arguments()
 dry_run = arguments.dry_run
 
 if arguments.sets:
-    flickr.update_photosets()
+    flickr.update_photo_sets()
 if arguments.photos:
     ignore_photo_in_many_sets = arguments.ignore_photo_in_many_sets
     ignore_photo_in_no_sets = arguments.ignore_photo_in_no_sets
