@@ -5,6 +5,7 @@ import flickrapi
 import webbrowser
 import os
 import datetime
+import logging
 from database import FlickrPhoto, FlickrPhotoSet, FlickrPhotoSetPhoto, DatabaseUtil
 from retry import retry
 
@@ -20,8 +21,10 @@ class Flickr:
         api_key = os.environ['FLICKR_API_KEY']
         api_secret = os.environ['FLICKR_API_SECRET']
         self.flickr = flickrapi.FlickrAPI(api_key, api_secret, format='parsed-json')
-        self.authenticate()
+        self.user = self.authenticate()
+        self.user_id = self.user['user']['id']
         self.db = db
+        logging.basicConfig()
 
     def authenticate(self):
         print('Authenticate')
@@ -45,10 +48,10 @@ class Flickr:
             self.flickr.get_access_token(verifier)
 
         print('Get user')
-        self.user = self.flickr.test.login()
-        if self.user['stat'] != "ok":
+        user = self.flickr.test.login()
+        if user['stat'] != "ok":
             raise FlickrOrganizerError("Login status not ok!")
-        self.user_id = self.user['user']['id']
+        return user
 
     @staticmethod
     def flickr_timestamp2dt(value):
